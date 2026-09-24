@@ -10,6 +10,7 @@ type DeviationAnalysis struct {
 	InputHash            string       `gorm:"size:64;not null;uniqueIndex:idx_analysis_input_algo" json:"input_hash"`
 	InputSnapshot        string       `gorm:"type:text;not null" json:"input_snapshot"`
 	PhaseScoresJSON      string       `gorm:"type:text;not null" json:"phase_scores_json"`
+	OverallDeviation     *float64     `gorm:"index" json:"overall_deviation,omitempty"`
 	DeviationLevel       string       `gorm:"size:24;not null;index" json:"deviation_level"`
 	AlignedCurveJSON     string       `gorm:"type:text;not null" json:"aligned_curve_json"`
 	SuspectedCausesJSON  string       `gorm:"type:text;not null" json:"suspected_causes_json"`

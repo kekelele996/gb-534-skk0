@@ -28,6 +28,7 @@ export interface DeviationAnalysis {
   algorithm_version: string
   input_hash: string
   phase_scores_json: PhaseScore[]
+  overall_deviation?: number
   deviation_level: DeviationLevel
   aligned_curve_json: AlignedPoint[]
   suspected_causes_json: string[]

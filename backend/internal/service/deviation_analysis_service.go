@@ -110,7 +110,8 @@ func (s *DeviationAnalysisService) Run(
 		return dto.DeviationAnalysisResponse{}, false, util.WrapError(http.StatusUnprocessableEntity, util.CodeValidation, "deviation analysis failed", evaluateErr)
 	}
 	changed, err = s.analyses.Complete(ctx, analysis.ID, map[string]any{
-		"phase_scores_json": result.PhaseScoresJSON, "deviation_level": string(result.DeviationLevel),
+		"phase_scores_json": result.PhaseScoresJSON, "overall_deviation": result.OverallScore,
+		"deviation_level": string(result.DeviationLevel),
 		"aligned_curve_json": result.AlignedCurveJSON, "suspected_causes_json": result.SuspectedCausesJSON,
 		"explanation": result.Explanation, "analyzed_at": s.now(), "duration_milliseconds": duration,
 	})
@@ -154,6 +155,69 @@ func (s *DeviationAnalysisService) List(
 		response.Items = append(response.Items, dto.NewDeviationAnalysisResponse(analysis))
 	}
 	return response, nil
+}
+// Trend aggregates completed, non-voided analyses that share the anchor's
+// vessel, frozen recipe version and sensor channel, ordered chronologically so
+// process engineers can spot continuous deterioration across batches.
+func (s *DeviationAnalysisService) Trend(ctx context.Context, anchorID uint) (dto.BatchTrendResponse, error) {
+	anchor, err := s.analyses.GetByID(ctx, anchorID, true)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return dto.BatchTrendResponse{}, util.NotFound("deviation analysis")
+		}
+		return dto.BatchTrendResponse{}, util.WrapError(http.StatusInternalServerError, util.CodeInternal, "unable to load trend anchor analysis", err)
+	}
+	if anchor.SensorSeries.ID == 0 || anchor.SensorSeries.Vessel.ID == 0 {
+		return dto.BatchTrendResponse{}, util.NewError(http.StatusInternalServerError, util.CodeInternal, "trend anchor is missing vessel context")
+	}
+	cohort, err := s.analyses.ListBatchTrend(ctx, anchor.SensorSeries.VesselID, anchor.RecipeID, anchor.SensorSeries.Channel)
+	if err != nil {
+		return dto.BatchTrendResponse{}, util.WrapError(http.StatusInternalServerError, util.CodeInternal, "unable to list batch trend", err)
+	}
+	response := dto.BatchTrendResponse{
+		Context: dto.BatchTrendContext{
+			VesselID: anchor.SensorSeries.VesselID, VesselCode: anchor.SensorSeries.Vessel.VesselCode,
+			RecipeID: anchor.RecipeID, RecipeCode: anchor.SensorSeries.Recipe.RecipeCode,
+			RecipeVersion: anchor.RecipeVersion, Channel: anchor.SensorSeries.Channel,
+		},
+		AnchorAnalysis: anchor.ID,
+		Points:         make([]dto.BatchTrendPoint, 0, len(cohort)),
+		Comparable:     len(cohort) >= 2,
+	}
+	for _, analysis := range cohort {
+		point := dto.BatchTrendPoint{
+			AnalysisID: analysis.ID, SensorSeriesID: analysis.SensorSeriesID,
+			RunCode: analysis.SensorSeries.RunCode, AnalyzedAt: analysis.AnalyzedAt,
+			OverallDeviation: overallDeviation(analysis), DeviationLevel: analysis.DeviationLevel,
+			AnalysisState: analysis.AnalysisState, PhaseDeviations: map[string]float64{},
+		}
+		scores, decodeErr := dto.DecodePhaseScores(analysis.PhaseScoresJSON)
+		if decodeErr != nil {
+			return dto.BatchTrendResponse{}, util.WrapError(http.StatusInternalServerError, util.CodeInternal, "unable to read frozen phase evidence", decodeErr)
+		}
+		for _, score := range scores {
+			point.PhaseDeviations[score.Phase] = score.WeightedDeviation
+		}
+		response.Points = append(response.Points, point)
+	}
+	return response, nil
+}
+// overallDeviation returns the persisted overall weighted deviation, falling
+// back to the mean of the frozen phase weighted deviations for historical
+// results created before the overall_deviation column existed.
+func overallDeviation(analysis model.DeviationAnalysis) float64 {
+	if analysis.OverallDeviation != nil {
+		return *analysis.OverallDeviation
+	}
+	scores, err := dto.DecodePhaseScores(analysis.PhaseScoresJSON)
+	if err != nil || len(scores) == 0 {
+		return 0
+	}
+	total := 0.0
+	for _, score := range scores {
+		total += score.WeightedDeviation
+	}
+	return total / float64(len(scores))
 }
 func (s *DeviationAnalysisService) Transition(
 	ctx context.Context, id uint, request dto.DeviationAnalysisTransitionRequest, actor util.Actor,

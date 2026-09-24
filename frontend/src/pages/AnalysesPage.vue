@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { CheckCircle2, FileSearch, Play, RefreshCw, RotateCcw, SearchCheck } from 'lucide-vue-next'
 import AnalysisExplanationDrawer from '../components/common/AnalysisExplanationDrawer.vue'
 import AppShell from '../components/common/AppShell.vue'
+import BatchTrendPanel from '../components/common/BatchTrendPanel.vue'
 import DeviationBadge from '../components/common/DeviationBadge.vue'
 import KineticsChart from '../components/common/KineticsChart.vue'
 import PageHeader from '../components/common/PageHeader.vue'
@@ -24,8 +25,12 @@ const reviewComment = ref('')
 const canSelfConfirm = computed(() => analyses.selected?.initiated_by !== auth.user?.id)
 
 async function run() {
-  try { await runner.run(); ElMessage.success('分析已完成或返回现有幂等结果') }
+  try { await runner.run(); await analyses.loadTrend(); ElMessage.success('分析已完成或返回现有幂等结果') }
   catch (error) { ElMessage.error(error instanceof Error ? error.message : '分析运行失败') }
+}
+async function selectAnalysis(id: number) {
+  try { await analyses.select(id) }
+  catch (error) { ElMessage.error(error instanceof Error ? error.message : '切换批次失败') }
 }
 async function transition(state: AnalysisState) {
   try { await analyses.transition(state, reviewComment.value); reviewComment.value = ''; ElMessage.success('分析状态已更新') }
@@ -35,14 +40,22 @@ async function replay() {
   try { await analyses.replay(); ElMessage.success('冻结输入重放一致') }
   catch (error) { ElMessage.error(error instanceof Error ? error.message : '重放失败') }
 }
-onMounted(async () => { await Promise.all([series.load(), analyses.load()]); runner.seriesId.value = runner.readySeries.value[0]?.id })
+async function refresh() {
+  try { await analyses.load(); if (analyses.selected) await analyses.loadTrend() }
+  catch (error) { ElMessage.error(error instanceof Error ? error.message : '刷新失败') }
+}
+onMounted(async () => {
+  await Promise.all([series.load(), analyses.load()])
+  runner.seriesId.value = runner.readySeries.value[0]?.id
+  if (analyses.selected) await analyses.loadTrend()
+})
 </script>
 
 <template>
   <AppShell>
     <div class="page-wrap">
       <PageHeader eyebrow="PHASE-CONSTRAINED DTW" title="偏差分析" description="对齐实测与配方参考曲线，逐阶段呈现持续时间、斜率、峰值时间与曲线距离证据。">
-        <el-tooltip content="刷新数据"><el-button circle aria-label="刷新" @click="analyses.load()"><RefreshCw :size="17" /></el-button></el-tooltip>
+        <el-tooltip content="刷新数据"><el-button circle aria-label="刷新" @click="refresh"><RefreshCw :size="17" /></el-button></el-tooltip>
         <el-button v-if="analyses.selected" @click="drawer = true"><FileSearch :size="16" />查看解释</el-button>
       </PageHeader>
       <section v-if="canRunAnalysis" class="run-band">
@@ -57,7 +70,7 @@ onMounted(async () => { await Promise.all([series.load(), analyses.load()]); run
         <section class="analysis-list">
           <div class="section-heading"><div><h2>历史结果</h2><p>{{ analyses.items.length }} 条不可覆盖记录</p></div></div>
           <el-skeleton v-if="analyses.loading" :rows="6" animated />
-          <button v-for="item in analyses.items" v-else :key="item.id" class="analysis-row" :class="{ selected: analyses.selected?.id === item.id }" @click="analyses.selected = item">
+          <button v-for="item in analyses.items" v-else :key="item.id" class="analysis-row" :class="{ selected: analyses.selected?.id === item.id }" @click="selectAnalysis(item.id)">
             <span>#{{ item.id }}</span>
             <span><strong>{{ item.sensor_series?.run_code ?? 'Series ' + item.sensor_series_id }}</strong><small>{{ new Date(item.analyzed_at).toLocaleString() }}</small></span>
             <DeviationBadge :level="item.deviation_level" />
@@ -95,6 +108,7 @@ onMounted(async () => { await Promise.all([series.load(), analyses.load()]); run
                 <el-button v-if="['completed','reviewed','investigating','confirmed'].includes(analyses.selected.analysis_state)" text @click="transition('voided')">作废</el-button>
               </div>
             </section>
+            <BatchTrendPanel :trend="analyses.trend" :loading="analyses.trendLoading" :error="analyses.trendError" @select="selectAnalysis" />
           </template>
           <div v-else class="empty-state"><h2>选择历史结果</h2><p>对齐曲线和阶段证据将在此显示。</p></div>
         </section>

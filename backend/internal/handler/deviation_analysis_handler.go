@@ -38,6 +38,15 @@ func (h *DeviationAnalysisHandler) Get(c *gin.Context) {
 	result, serviceErr := h.service.Get(c.Request.Context(), id)
 	respond(c, http.StatusOK, result, serviceErr)
 }
+func (h *DeviationAnalysisHandler) Trend(c *gin.Context) {
+	id, err := util.ParseUintParam(c, "id")
+	if err != nil {
+		util.Fail(c, err)
+		return
+	}
+	result, serviceErr := h.service.Trend(c.Request.Context(), id)
+	respond(c, http.StatusOK, result, serviceErr)
+}
 func (h *DeviationAnalysisHandler) Run(c *gin.Context) {
 	var request dto.RunDeviationAnalysisRequest
 	if !bindJSON(c, &request) {

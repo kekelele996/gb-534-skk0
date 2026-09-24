@@ -229,7 +229,8 @@ func seedDomain(tx *gorm.DB, users map[string]model.User) error {
 	analysis := model.DeviationAnalysis{
 		SensorSeriesID: series[0].ID, RecipeID: recipes[0].ID, RecipeVersion: recipes[0].Version,
 		AlgorithmVersion: algorithm.Version, InputHash: inputHash, InputSnapshot: snapshotJSON,
-		PhaseScoresJSON: result.PhaseScoresJSON, DeviationLevel: string(result.DeviationLevel),
+		PhaseScoresJSON: result.PhaseScoresJSON, OverallDeviation: &result.OverallScore,
+		DeviationLevel: string(result.DeviationLevel),
 		AlignedCurveJSON: result.AlignedCurveJSON, SuspectedCausesJSON: result.SuspectedCausesJSON,
 		AnalysisState: string(constants.AnalysisCompleted), Explanation: result.Explanation,
 		AnalyzedAt: now.Add(-2 * time.Hour), InitiatedBy: analyst.ID, InitiatedByName: analyst.Username,

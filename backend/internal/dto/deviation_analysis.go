@@ -16,6 +16,28 @@ type DeviationAnalysisQuery struct {
 	State, Level, Initiator  string
 	Page, PageSize           int
 }
+// PhaseScore mirrors the frozen per-phase evidence written by the DTW evaluator.
+type PhaseScore struct {
+	Phase             string             `json:"phase"`
+	DurationDeviation float64            `json:"duration_deviation"`
+	SlopeDeviation    float64            `json:"slope_deviation"`
+	PeakTimeDeviation float64            `json:"peak_time_deviation"`
+	CurveDistance     float64            `json:"curve_distance"`
+	WeightedDeviation float64            `json:"weighted_deviation"`
+	ChannelScores     map[string]float64 `json:"channel_scores"`
+	ObservedPoints    int                `json:"observed_points"`
+}
+// DecodePhaseScores parses the frozen phase evidence JSON; an empty payload yields no scores.
+func DecodePhaseScores(raw string) ([]PhaseScore, error) {
+	if raw == "" {
+		return []PhaseScore{}, nil
+	}
+	var scores []PhaseScore
+	if err := json.Unmarshal([]byte(raw), &scores); err != nil {
+		return nil, err
+	}
+	return scores, nil
+}
 type DeviationAnalysisResponse struct {
 	ID                   uint                  `json:"id"`
 	SensorSeriesID       uint                  `json:"sensor_series_id"`
@@ -24,6 +46,7 @@ type DeviationAnalysisResponse struct {
 	AlgorithmVersion     string                `json:"algorithm_version"`
 	InputHash            string                `json:"input_hash"`
 	PhaseScoresJSON      json.RawMessage       `json:"phase_scores_json"`
+	OverallDeviation     *float64              `json:"overall_deviation,omitempty"`
 	DeviationLevel       string                `json:"deviation_level"`
 	AlignedCurveJSON     json.RawMessage       `json:"aligned_curve_json"`
 	SuspectedCausesJSON  json.RawMessage       `json:"suspected_causes_json"`
@@ -48,11 +71,38 @@ type DeviationAnalysisListResponse struct {
 	Page  int                         `json:"page"`
 	Size  int                         `json:"page_size"`
 }
+// BatchTrendContext identifies the vessel/recipe/channel cohort a trend point belongs to.
+type BatchTrendContext struct {
+	VesselID      uint   `json:"vessel_id"`
+	VesselCode    string `json:"vessel_code"`
+	RecipeID      uint   `json:"recipe_id"`
+	RecipeCode    string `json:"recipe_code"`
+	RecipeVersion int    `json:"recipe_version"`
+	Channel       string `json:"channel"`
+}
+// BatchTrendPoint is one completed, non-voided analysis inside the comparable cohort.
+type BatchTrendPoint struct {
+	AnalysisID        uint               `json:"analysis_id"`
+	SensorSeriesID    uint               `json:"sensor_series_id"`
+	RunCode           string             `json:"run_code"`
+	AnalyzedAt        time.Time          `json:"analyzed_at"`
+	OverallDeviation  float64            `json:"overall_deviation"`
+	DeviationLevel    string             `json:"deviation_level"`
+	AnalysisState     string             `json:"analysis_state"`
+	PhaseDeviations   map[string]float64 `json:"phase_deviations"`
+}
+type BatchTrendResponse struct {
+	Context        BatchTrendContext `json:"context"`
+	AnchorAnalysis uint              `json:"anchor_analysis_id"`
+	Points         []BatchTrendPoint `json:"points"`
+	Comparable     bool              `json:"comparable"`
+}
 func NewDeviationAnalysisResponse(analysis model.DeviationAnalysis) DeviationAnalysisResponse {
 	response := DeviationAnalysisResponse{
 		ID: analysis.ID, SensorSeriesID: analysis.SensorSeriesID, RecipeID: analysis.RecipeID,
 		RecipeVersion: analysis.RecipeVersion, AlgorithmVersion: analysis.AlgorithmVersion,
 		InputHash: analysis.InputHash, PhaseScoresJSON: rawJSON(analysis.PhaseScoresJSON),
+		OverallDeviation: analysis.OverallDeviation,
 		DeviationLevel: analysis.DeviationLevel, AlignedCurveJSON: rawJSON(analysis.AlignedCurveJSON),
 		SuspectedCausesJSON: rawJSON(analysis.SuspectedCausesJSON), AnalysisState: analysis.AnalysisState,
 		Explanation: analysis.Explanation, AnalyzedAt: analysis.AnalyzedAt,

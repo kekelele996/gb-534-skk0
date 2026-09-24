@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"fermentation-kinetics-deviation-analysis/backend/internal/constants"
 	"fermentation-kinetics-deviation-analysis/backend/internal/dto"
 	"fermentation-kinetics-deviation-analysis/backend/internal/model"
 	"gorm.io/gorm"
@@ -12,6 +13,7 @@ type DeviationAnalysisRepository interface {
 	Create(context.Context, *model.DeviationAnalysis) error
 	GetByID(context.Context, uint, bool) (model.DeviationAnalysis, error)
 	List(context.Context, dto.DeviationAnalysisQuery) ([]model.DeviationAnalysis, int64, error)
+	ListBatchTrend(context.Context, uint, uint, string) ([]model.DeviationAnalysis, error)
 	FindByIdempotencyKey(context.Context, string) (model.DeviationAnalysis, error)
 	FindByInput(context.Context, string, string) (model.DeviationAnalysis, error)
 	Transition(context.Context, uint, string, string, map[string]any) (bool, error)
@@ -82,6 +84,29 @@ func (r *deviationAnalysisRepository) List(ctx context.Context, query dto.Deviat
 		return nil, 0, fmt.Errorf("list deviation analyses: %w", err)
 	}
 	return analyses, total, nil
+}
+// ListBatchTrend returns completed, non-voided analyses produced on the same
+// vessel/channel for one frozen recipe version, ordered oldest first so the
+// service can surface a chronological inter-batch trend.
+func (r *deviationAnalysisRepository) ListBatchTrend(ctx context.Context, vesselID, recipeID uint, channel string) ([]model.DeviationAnalysis, error) {
+	var analyses []model.DeviationAnalysis
+	comparableStates := []string{
+		string(constants.AnalysisCompleted), string(constants.AnalysisReviewed),
+		string(constants.AnalysisConfirmed), string(constants.AnalysisInvestigating),
+	}
+	err := r.db.WithContext(ctx).
+		Joins("JOIN sensor_series ON sensor_series.id = deviation_analyses.sensor_series_id").
+		Where("sensor_series.vessel_id = ?", vesselID).
+		Where("deviation_analyses.recipe_id = ?", recipeID).
+		Where("sensor_series.channel = ?", channel).
+		Where("deviation_analyses.analysis_state IN ?", comparableStates).
+		Preload("SensorSeries").Preload("SensorSeries.Vessel").Preload("SensorSeries.Recipe").
+		Order("deviation_analyses.analyzed_at ASC, deviation_analyses.id ASC").
+		Limit(500).Find(&analyses).Error
+	if err != nil {
+		return nil, fmt.Errorf("list batch trend for vessel %d recipe %d: %w", vesselID, recipeID, err)
+	}
+	return analyses, nil
 }
 func (r *deviationAnalysisRepository) Transition(
 	ctx context.Context, id uint, from, to string, updates map[string]any,

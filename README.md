@@ -14,7 +14,7 @@ docker compose up -d
 - 发酵罐：维护容积、位置、责任团队和传感器通道，查看最近数据质量与偏差摘要。
 - 培养配方：管理四阶段边界、参考曲线、通道容差和版本生命周期，支持复制版本。
 - 传感器时序：导入多通道 JSON 数据，执行排序去重、缺失率检查、稳健缩放和状态迁移。
-- 偏差分析：冻结配方与时序输入，执行阶段约束 DTW，展示阶段证据、对齐曲线和疑似原因。
+- 偏差分析：冻结配方与时序输入，执行阶段约束 DTW，展示阶段证据、对齐曲线、疑似原因，并按同罐·同配方版本·同通道汇总未作废批次的批间趋势。
 - 复核与审计：强制发起人与确认人分离，记录 request ID、前后快照、输入哈希、算法版本和耗时。
 - 平台保护：JWT、RBAC、统一错误响应、登录/导入/分析限流、幂等键和并发条件更新。
 
@@ -102,6 +102,7 @@ docker compose up -d
 | `POST` | `/api/v1/sensor-series/:id/transition` | 校验、标准化、就绪或作废 |
 | `GET/POST` | `/api/v1/deviation-analyses` | 分析列表/幂等运行 |
 | `GET` | `/api/v1/deviation-analyses/:id` | 分析详情与冻结证据 |
+| `GET` | `/api/v1/deviation-analyses/:id/trend` | 同罐·同配方版本·同通道的批间趋势 |
 | `POST` | `/api/v1/deviation-analyses/:id/transition` | 复核、确认、调查或作废 |
 | `POST` | `/api/v1/deviation-analyses/:id/replay` | 冻结输入确定性重放 |
 | `GET` | `/api/v1/audit-logs` | 审计筛选 |

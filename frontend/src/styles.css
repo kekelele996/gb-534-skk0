@@ -218,6 +218,24 @@ code { font-family: "SFMono-Regular", Consolas, monospace; }
 }
 .review-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 7px; }
 
+.trend-panel { margin-top: 22px; padding-top: 14px; border-top: 2px solid var(--ink); }
+.trend-panel .section-heading h2 { display: flex; align-items: center; gap: 6px; }
+.trend-context { margin: 10px 0 8px; }
+.trend-hint { margin: 4px 0 10px; font-size: .65rem; line-height: 1.5; }
+.trend-insufficient { margin: 10px 0 4px; }
+.trend-rows { margin-top: 10px; border-top: 1px solid var(--line); }
+.trend-row {
+  width: 100%; min-height: 54px; display: grid; grid-template-columns: minmax(150px, 1fr) 72px auto minmax(260px, 1.4fr);
+  align-items: center; gap: 12px; padding: 8px 6px; color: var(--ink); background: transparent;
+  border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer;
+}
+.trend-row:hover, .trend-row.selected { background: #edf5f0; }
+.trend-row.selected { box-shadow: inset 3px 0 0 var(--leaf); }
+.trend-overall { font-size: .86rem; }
+.trend-phases { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.trend-phases span { min-width: 0; display: grid; gap: 2px; font-size: .66rem; font-variant-numeric: tabular-nums; }
+.trend-phases i { color: var(--muted); font-size: .56rem; font-style: normal; text-transform: uppercase; }
+
 .drawer-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-bottom: 14px; border-bottom: 2px solid var(--ink); }
 .drawer-heading > div { display: flex; align-items: center; gap: 9px; }
 .drawer-heading span { display: grid; }
@@ -288,6 +306,8 @@ code { font-family: "SFMono-Regular", Consolas, monospace; }
   .page-header { align-items: flex-start; }
   .series-workspace, .analysis-workspace { grid-template-columns: 1fr; }
   .series-list, .analysis-list { max-height: 340px; overflow-y: auto; padding: 0; border-right: 0; border-bottom: 2px solid var(--ink); }
+  .trend-row { grid-template-columns: minmax(120px, 1fr) 64px auto; }
+  .trend-phases { grid-column: 1 / -1; }
   .run-band { grid-template-columns: 1fr auto; }
   .run-band > div:first-child { grid-column: 1 / -1; }
   .login-shell { grid-template-columns: 1fr; }
