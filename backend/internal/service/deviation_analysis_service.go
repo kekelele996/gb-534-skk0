@@ -110,7 +110,8 @@ func (s *DeviationAnalysisService) Run(
 		return dto.DeviationAnalysisResponse{}, false, util.WrapError(http.StatusUnprocessableEntity, util.CodeValidation, "deviation analysis failed", evaluateErr)
 	}
 	changed, err = s.analyses.Complete(ctx, analysis.ID, map[string]any{
-		"phase_scores_json": result.PhaseScoresJSON, "deviation_level": string(result.DeviationLevel),
+		"phase_scores_json": result.PhaseScoresJSON, "overall_score": result.OverallScore,
+		"deviation_level": string(result.DeviationLevel),
 		"aligned_curve_json": result.AlignedCurveJSON, "suspected_causes_json": result.SuspectedCausesJSON,
 		"explanation": result.Explanation, "analyzed_at": s.now(), "duration_milliseconds": duration,
 	})
@@ -139,6 +140,27 @@ func (s *DeviationAnalysisService) Get(ctx context.Context, id uint) (dto.Deviat
 		return dto.DeviationAnalysisResponse{}, util.WrapError(http.StatusInternalServerError, util.CodeInternal, "unable to load deviation analysis", err)
 	}
 	return dto.NewDeviationAnalysisResponse(analysis), nil
+}
+// Trend aggregates result-bearing, non-voided analyses that share the anchor analysis vessel,
+// recipe version and sensor channel, ordered by analysis time for batch-to-batch comparison.
+func (s *DeviationAnalysisService) Trend(ctx context.Context, id uint) (dto.DeviationTrendResponse, error) {
+	anchor, err := s.analyses.GetByID(ctx, id, true)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return dto.DeviationTrendResponse{}, util.NotFound("deviation analysis")
+		}
+		return dto.DeviationTrendResponse{}, util.WrapError(http.StatusInternalServerError, util.CodeInternal, "unable to load deviation analysis", err)
+	}
+	if anchor.SensorSeries.ID == 0 || anchor.SensorSeries.Vessel.ID == 0 || anchor.SensorSeries.Recipe.ID == 0 {
+		return dto.DeviationTrendResponse{}, util.NewError(http.StatusInternalServerError, util.CodeInternal, "analysis trend context is incomplete")
+	}
+	peers, err := s.analyses.TrendPeers(
+		ctx, anchor.SensorSeries.VesselID, anchor.RecipeID, anchor.RecipeVersion, anchor.SensorSeries.Channel,
+	)
+	if err != nil {
+		return dto.DeviationTrendResponse{}, util.WrapError(http.StatusInternalServerError, util.CodeInternal, "unable to aggregate batch trend", err)
+	}
+	return dto.NewDeviationTrendResponse(anchor, peers), nil
 }
 func (s *DeviationAnalysisService) List(
 	ctx context.Context, query dto.DeviationAnalysisQuery,

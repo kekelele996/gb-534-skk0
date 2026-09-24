@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { CheckCircle2, FileSearch, Play, RefreshCw, RotateCcw, SearchCheck } from 'lucide-vue-next'
 import AnalysisExplanationDrawer from '../components/common/AnalysisExplanationDrawer.vue'
 import AppShell from '../components/common/AppShell.vue'
+import BatchTrendPanel from '../components/common/BatchTrendPanel.vue'
 import DeviationBadge from '../components/common/DeviationBadge.vue'
 import KineticsChart from '../components/common/KineticsChart.vue'
 import PageHeader from '../components/common/PageHeader.vue'
@@ -13,7 +14,7 @@ import { useAnalysisRun } from '../hooks/useAnalysisRun'
 import { useAuth } from '../hooks/useAuth'
 import { useAnalysisStore } from '../stores/deviation-analysis'
 import { useSeriesStore } from '../stores/sensor-series'
-import type { AnalysisState } from '../types/deviation-analysis'
+import type { AnalysisState, DeviationTrendPoint } from '../types/deviation-analysis'
 
 const analyses = useAnalysisStore()
 const series = useSeriesStore()
@@ -35,7 +36,16 @@ async function replay() {
   try { await analyses.replay(); ElMessage.success('冻结输入重放一致') }
   catch (error) { ElMessage.error(error instanceof Error ? error.message : '重放失败') }
 }
-onMounted(async () => { await Promise.all([series.load(), analyses.load()]); runner.seriesId.value = runner.readySeries.value[0]?.id })
+async function openTrendEvidence(point: DeviationTrendPoint) {
+  await analyses.selectById(point.id)
+  ElMessage.success(`已切换到 ${point.run_code} 的原始证据`)
+}
+watch(() => analyses.selected?.id, () => { void analyses.loadTrend() })
+onMounted(async () => {
+  await Promise.all([series.load(), analyses.load()])
+  runner.seriesId.value = runner.readySeries.value[0]?.id
+  await analyses.loadTrend()
+})
 </script>
 
 <template>
@@ -73,6 +83,12 @@ onMounted(async () => { await Promise.all([series.load(), analyses.load()]); run
               <StateBadge :state="analyses.selected.analysis_state" />
               <el-tooltip v-if="canRunAnalysis" content="重放冻结输入"><el-button circle aria-label="重放分析" @click="replay"><RotateCcw :size="17" /></el-button></el-tooltip>
             </div>
+            <div v-if="analyses.selected.sensor_series" class="trend-scope">
+              <span>发酵罐 <strong>{{ analyses.selected.sensor_series.vessel?.vessel_code ?? '—' }}</strong></span>
+              <span>配方版本 <strong>{{ analyses.selected.sensor_series.recipe?.recipe_code ?? '—' }} v{{ analyses.selected.recipe_version }}</strong></span>
+              <span>通道 <strong>{{ analyses.selected.sensor_series.channel }}</strong></span>
+            </div>
+            <BatchTrendPanel :trend="analyses.trend" :loading="analyses.trendLoading" @select="openTrendEvidence" />
             <KineticsChart :aligned="analyses.selected.aligned_curve_json" :height="380" />
             <div class="phase-score-grid">
               <article v-for="score in analyses.selected.phase_scores_json" :key="score.phase">

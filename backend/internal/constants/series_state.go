@@ -95,3 +95,24 @@ func CanTransitionAnalysis(from, to AnalysisState) bool {
 func AnalysisStateValues() []string {
 	return []string{"queued", "analyzing", "completed", "failed", "reviewed", "confirmed", "investigating", "voided"}
 }
+// analysisResultStates are the states that carry a formed analysis result and are not voided.
+var analysisResultStates = []AnalysisState{
+	AnalysisCompleted, AnalysisReviewed, AnalysisConfirmed, AnalysisInvestigating,
+}
+// HasFormedResult reports whether the state carries finished evidence (excludes queued, analyzing, failed and voided).
+func (s AnalysisState) HasFormedResult() bool {
+	for _, candidate := range analysisResultStates {
+		if s == candidate {
+			return true
+		}
+	}
+	return false
+}
+// AnalysisResultStateValues returns the result-bearing, non-voided analysis state names.
+func AnalysisResultStateValues() []string {
+	values := make([]string, 0, len(analysisResultStates))
+	for _, state := range analysisResultStates {
+		values = append(values, string(state))
+	}
+	return values
+}

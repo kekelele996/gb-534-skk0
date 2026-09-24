@@ -1,5 +1,9 @@
 package model
-import "time"
+import (
+	"encoding/json"
+	"math"
+	"time"
+)
 type DeviationAnalysis struct {
 	ID                   uint         `gorm:"primaryKey" json:"id"`
 	SensorSeriesID       uint         `gorm:"not null;index" json:"sensor_series_id"`
@@ -10,6 +14,7 @@ type DeviationAnalysis struct {
 	InputHash            string       `gorm:"size:64;not null;uniqueIndex:idx_analysis_input_algo" json:"input_hash"`
 	InputSnapshot        string       `gorm:"type:text;not null" json:"input_snapshot"`
 	PhaseScoresJSON      string       `gorm:"type:text;not null" json:"phase_scores_json"`
+	OverallScore         *float64     `gorm:"index" json:"overall_score,omitempty"`
 	DeviationLevel       string       `gorm:"size:24;not null;index" json:"deviation_level"`
 	AlignedCurveJSON     string       `gorm:"type:text;not null" json:"aligned_curve_json"`
 	SuspectedCausesJSON  string       `gorm:"type:text;not null" json:"suspected_causes_json"`
@@ -30,6 +35,26 @@ type DeviationAnalysis struct {
 }
 func (DeviationAnalysis) TableName() string                    { return "deviation_analyses" }
 func (a DeviationAnalysis) ReviewerSeparated(userID uint) bool { return a.InitiatedBy != userID }
+// phaseScoreWeight mirrors algorithm.PhaseEvidence and is used to derive legacy overall scores.
+type phaseScoreWeight struct {
+	WeightedDeviation float64 `json:"weighted_deviation"`
+}
+// OverallDeviation returns the persisted multi-channel overall deviation. Rows created before the
+// overall score was stored fall back to the equal-weight mean of per-phase weighted deviations.
+func (a DeviationAnalysis) OverallDeviation() float64 {
+	if a.OverallScore != nil {
+		return *a.OverallScore
+	}
+	var scores []phaseScoreWeight
+	if err := json.Unmarshal([]byte(a.PhaseScoresJSON), &scores); err != nil || len(scores) == 0 {
+		return 0
+	}
+	total := 0.0
+	for _, score := range scores {
+		total += score.WeightedDeviation
+	}
+	return math.Round((total/float64(len(scores)))*1e6) / 1e6
+}
 type User struct {
 	ID           uint      `gorm:"primaryKey" json:"id"`
 	Username     string    `gorm:"size:80;not null;uniqueIndex" json:"username"`

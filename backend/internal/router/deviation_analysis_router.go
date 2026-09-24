@@ -11,6 +11,7 @@ func RegisterDeviationAnalysisRoutes(
 	group := api.Group("/deviation-analyses")
 	group.GET("", middleware.RequirePermission(constants.PermissionRead), h.List)
 	group.GET("/:id", middleware.RequirePermission(constants.PermissionRead), h.Get)
+	group.GET("/:id/trend", middleware.RequirePermission(constants.PermissionRead), h.Trend)
 	group.POST("", middleware.RequirePermission(constants.PermissionAnalysisRun), runLimiter.Middleware("analysis-run"), h.Run)
 	group.POST("/:id/transition", middleware.RequirePermission(constants.PermissionAnalysisReview), h.Transition)
 	group.POST("/:id/replay", middleware.RequirePermission(constants.PermissionAnalysisRun), runLimiter.Middleware("analysis-replay"), h.Replay)

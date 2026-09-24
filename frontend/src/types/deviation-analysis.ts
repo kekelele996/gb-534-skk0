@@ -28,6 +28,7 @@ export interface DeviationAnalysis {
   algorithm_version: string
   input_hash: string
   phase_scores_json: PhaseScore[]
+  overall_score: number
   deviation_level: DeviationLevel
   aligned_curve_json: AlignedPoint[]
   suspected_causes_json: string[]
@@ -45,4 +46,32 @@ export interface DeviationAnalysis {
   sensor_series?: SensorSeries
   created_at: string
   updated_at: string
+}
+export interface DeviationTrendPoint {
+  id: number
+  sensor_series_id: number
+  run_code: string
+  vessel_id: number
+  vessel_code: string
+  recipe_id: number
+  recipe_code: string
+  recipe_version: number
+  channel: string
+  overall_score: number
+  deviation_level: DeviationLevel
+  analysis_state: AnalysisState
+  phase_scores_json: PhaseScore[]
+  analyzed_at: string
+}
+export interface DeviationTrend {
+  anchor_id: number
+  vessel_id: number
+  vessel_code: string
+  recipe_id: number
+  recipe_code: string
+  recipe_version: number
+  channel: string
+  comparable: boolean
+  items: DeviationTrendPoint[]
+  current_point?: DeviationTrendPoint
 }

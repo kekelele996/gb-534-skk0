@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"fermentation-kinetics-deviation-analysis/backend/internal/constants"
 	"fermentation-kinetics-deviation-analysis/backend/internal/dto"
 	"fermentation-kinetics-deviation-analysis/backend/internal/model"
 	"gorm.io/gorm"
@@ -14,6 +15,7 @@ type DeviationAnalysisRepository interface {
 	List(context.Context, dto.DeviationAnalysisQuery) ([]model.DeviationAnalysis, int64, error)
 	FindByIdempotencyKey(context.Context, string) (model.DeviationAnalysis, error)
 	FindByInput(context.Context, string, string) (model.DeviationAnalysis, error)
+	TrendPeers(context.Context, uint, uint, int, string) ([]model.DeviationAnalysis, error)
 	Transition(context.Context, uint, string, string, map[string]any) (bool, error)
 	Complete(context.Context, uint, map[string]any) (bool, error)
 	SetReplayVerified(context.Context, uint, bool) error
@@ -53,6 +55,24 @@ func (r *deviationAnalysisRepository) FindByInput(ctx context.Context, hash, ver
 		return model.DeviationAnalysis{}, fmt.Errorf("find analysis by frozen input: %w", err)
 	}
 	return analysis, nil
+}
+func (r *deviationAnalysisRepository) TrendPeers(
+	ctx context.Context, vesselID, recipeID uint, recipeVersion int, channel string,
+) ([]model.DeviationAnalysis, error) {
+	var analyses []model.DeviationAnalysis
+	err := r.db.WithContext(ctx).
+		Joins("JOIN sensor_series ON sensor_series.id = deviation_analyses.sensor_series_id").
+		Where("sensor_series.vessel_id = ?", vesselID).
+		Where("deviation_analyses.recipe_id = ? AND deviation_analyses.recipe_version = ?", recipeID, recipeVersion).
+		Where("sensor_series.channel = ?", channel).
+		Where("deviation_analyses.analysis_state IN ?", constants.AnalysisResultStateValues()).
+		Preload("SensorSeries").Preload("SensorSeries.Vessel").Preload("SensorSeries.Recipe").
+		Order("deviation_analyses.analyzed_at ASC, deviation_analyses.id ASC").
+		Find(&analyses).Error
+	if err != nil {
+		return nil, fmt.Errorf("list batch trend peers: %w", err)
+	}
+	return analyses, nil
 }
 func (r *deviationAnalysisRepository) List(ctx context.Context, query dto.DeviationAnalysisQuery) ([]model.DeviationAnalysis, int64, error) {
 	base := r.db.WithContext(ctx).Model(&model.DeviationAnalysis{})

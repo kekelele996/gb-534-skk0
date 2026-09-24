@@ -112,6 +112,29 @@ func seed(db *gorm.DB) error {
 	})
 }
 func errorsIsNotFound(err error) bool { return err == gorm.ErrRecordNotFound }
+// resyncSQLiteSequences advances sqlite_sequence to each table's MAX(id). The mattn SQLite
+// driver does not update sqlite_sequence when a row with an explicit primary key is inserted,
+// so subsequent auto-increment rows could collide with seeded identifiers.
+func resyncSQLiteSequences(tx *gorm.DB, tables ...string) error {
+	if tx.Dialector.Name() != "sqlite" {
+		return nil
+	}
+	for _, table := range tables {
+		var maxID uint
+		if err := tx.Table(table).Select("COALESCE(MAX(id), 0)").Scan(&maxID).Error; err != nil {
+			return fmt.Errorf("read max id for %s: %w", table, err)
+		}
+		if err := tx.Exec("DELETE FROM sqlite_sequence WHERE name = ?", table).Error; err != nil {
+			return fmt.Errorf("reset sqlite sequence for %s: %w", table, err)
+		}
+		if maxID > 0 {
+			if err := tx.Exec("INSERT INTO sqlite_sequence(name, seq) VALUES(?, ?)", table, maxID).Error; err != nil {
+				return fmt.Errorf("advance sqlite sequence for %s: %w", table, err)
+			}
+		}
+	}
+	return nil
+}
 func seedDomain(tx *gorm.DB, users map[string]model.User) error {
 	var count int64
 	if err := tx.Model(&model.FermentationVessel{}).Count(&count).Error; err != nil {
@@ -163,22 +186,12 @@ func seedDomain(tx *gorm.DB, users map[string]model.User) error {
 	if err := tx.Create(&recipes).Error; err != nil {
 		return fmt.Errorf("create seed culture recipes: %w", err)
 	}
-	started := now.Add(-30 * time.Hour).Truncate(time.Hour)
-	points := seedPoints(started, 0.18)
-	pointsJSON, err := timeseries.EncodePoints(points)
-	if err != nil {
-		return fmt.Errorf("encode seed points: %w", err)
-	}
-	_, normalization, err := timeseries.Normalize(points)
-	if err != nil {
-		return fmt.Errorf("normalize seed points: %w", err)
-	}
-	normalizationJSON, err := timeseries.EncodeNormalization(normalization)
-	if err != nil {
+	if err := resyncSQLiteSequences(tx, "users", "fermentation_vessels", "culture_recipes"); err != nil {
 		return err
 	}
+	started := now.Add(-30 * time.Hour).Truncate(time.Hour)
 	qualityJSON, err := json.Marshal(timeseries.QualitySummary{
-		OriginalPointCount: len(points), UniquePointCount: len(points), DuplicateCount: 0,
+		OriginalPointCount: 13, UniquePointCount: 13, DuplicateCount: 0,
 		LongGapCount: 0, MaxGapSeconds: 7200,
 		MissingRate: map[string]float64{"agitation": 0, "do": 0, "ph": 0, "temperature": 0},
 		Channels:    []string{"agitation", "do", "ph", "temperature"}, Warnings: []string{}, Valid: true,
@@ -186,58 +199,96 @@ func seedDomain(tx *gorm.DB, users map[string]model.User) error {
 	if err != nil {
 		return fmt.Errorf("encode seed quality summary: %w", err)
 	}
+	type seedBatch struct {
+		runCode     string
+		startedAt   time.Time
+		deviation   float64
+		analyzedAt  time.Time
+		idempotency string
+	}
+	// Same vessel, recipe version and channel, with rising deviation over time for trend review.
+	batches := []seedBatch{
+		{runCode: "RUN-2026-0815-A", startedAt: started.Add(-96 * time.Hour), deviation: 0.10, analyzedAt: now.Add(-90 * time.Hour), idempotency: "seed-analysis-001"},
+		{runCode: "RUN-2026-0819-A", startedAt: started, deviation: 0.18, analyzedAt: now.Add(-2 * time.Hour), idempotency: "seed-analysis-002"},
+		{runCode: "RUN-2026-0821-A", startedAt: now.Add(-28 * time.Hour).Truncate(time.Hour), deviation: 0.32, analyzedAt: now.Add(-40 * time.Minute), idempotency: "seed-analysis-003"},
+	}
+	analyst := users["analyst"]
+	batchSeries := make([]model.SensorSeries, 0, len(batches))
+	for _, batch := range batches {
+		batchPoints := seedPoints(batch.startedAt, batch.deviation)
+		batchPointsJSON, encodeErr := timeseries.EncodePoints(batchPoints)
+		if encodeErr != nil {
+			return fmt.Errorf("encode seed points for %s: %w", batch.runCode, encodeErr)
+		}
+		_, normalization, normalizeErr := timeseries.Normalize(batchPoints)
+		if normalizeErr != nil {
+			return fmt.Errorf("normalize seed points for %s: %w", batch.runCode, normalizeErr)
+		}
+		normalizationJSON, encodeErr := timeseries.EncodeNormalization(normalization)
+		if encodeErr != nil {
+			return fmt.Errorf("encode normalization for %s: %w", batch.runCode, encodeErr)
+		}
+		seedSeries := model.SensorSeries{
+			VesselID: vessels[0].ID, RecipeID: recipes[0].ID, RunCode: batch.runCode,
+			Channel: "multichannel", SampleIntervalS: 7200, PointsJSON: batchPointsJSON,
+			StartedAt: batchPoints[0].Timestamp, EndedAt: batchPoints[len(batchPoints)-1].Timestamp,
+			SourceChecksum: util.HashString(batchPointsJSON), SeriesState: string(constants.SeriesReady),
+			QualitySummary: string(qualityJSON), NormalizationJSON: normalizationJSON,
+			ImportedBy: analyst.ID, ImportedByName: analyst.Username,
+			CreatedAt: batch.startedAt, UpdatedAt: batch.startedAt.Add(25 * time.Hour),
+		}
+		// Create rows individually so GORM backfills the IDs referenced by the frozen analyses.
+		if err := tx.Create(&seedSeries).Error; err != nil {
+			return fmt.Errorf("create seed sensor series %s: %w", batch.runCode, err)
+		}
+		batchSeries = append(batchSeries, seedSeries)
+	}
 	secondPoints := seedPoints(started.Add(26*time.Hour), 0.10)
 	secondPointsJSON, err := timeseries.EncodePoints(secondPoints)
 	if err != nil {
 		return fmt.Errorf("encode second seed points: %w", err)
 	}
-	analyst := users["analyst"]
-	series := []model.SensorSeries{
-		{
-			VesselID: vessels[0].ID, RecipeID: recipes[0].ID, RunCode: "RUN-2026-0819-A",
-			Channel: "multichannel", SampleIntervalS: 7200, PointsJSON: pointsJSON,
-			StartedAt: points[0].Timestamp, EndedAt: points[len(points)-1].Timestamp,
-			SourceChecksum: util.HashString(pointsJSON), SeriesState: string(constants.SeriesReady),
-			QualitySummary: string(qualityJSON), NormalizationJSON: normalizationJSON,
-			ImportedBy: analyst.ID, ImportedByName: analyst.Username, CreatedAt: started, UpdatedAt: started.Add(25 * time.Hour),
-		},
-		{
-			VesselID: vessels[0].ID, RecipeID: recipes[0].ID, RunCode: "RUN-2026-0820-B",
-			Channel: "multichannel", SampleIntervalS: 7200, PointsJSON: secondPointsJSON,
-			StartedAt: secondPoints[0].Timestamp, EndedAt: secondPoints[len(secondPoints)-1].Timestamp,
-			SourceChecksum: util.HashString(secondPointsJSON), SeriesState: string(constants.SeriesImported),
-			QualitySummary: string(qualityJSON), NormalizationJSON: "{}",
-			ImportedBy: analyst.ID, ImportedByName: analyst.Username, CreatedAt: now.Add(-4 * time.Hour), UpdatedAt: now.Add(-4 * time.Hour),
-		},
+	importedSeries := model.SensorSeries{
+		VesselID: vessels[0].ID, RecipeID: recipes[0].ID, RunCode: "RUN-2026-0820-B",
+		Channel: "multichannel", SampleIntervalS: 7200, PointsJSON: secondPointsJSON,
+		StartedAt: secondPoints[0].Timestamp, EndedAt: secondPoints[len(secondPoints)-1].Timestamp,
+		SourceChecksum: util.HashString(secondPointsJSON), SeriesState: string(constants.SeriesImported),
+		QualitySummary: string(qualityJSON), NormalizationJSON: "{}",
+		ImportedBy: analyst.ID, ImportedByName: analyst.Username, CreatedAt: now.Add(-4 * time.Hour), UpdatedAt: now.Add(-4 * time.Hour),
 	}
-	if err := tx.Create(&series).Error; err != nil {
-		return fmt.Errorf("create seed sensor series: %w", err)
+	if err := tx.Create(&importedSeries).Error; err != nil {
+		return fmt.Errorf("create imported seed sensor series: %w", err)
 	}
-	snapshot := algorithm.NewSnapshot(series[0], recipes[0])
-	result, err := algorithm.NewEvaluator().Evaluate(snapshot)
-	if err != nil {
-		return fmt.Errorf("evaluate seed deviation analysis: %w", err)
-	}
-	inputHash, err := snapshot.Hash()
-	if err != nil {
-		return fmt.Errorf("hash seed analysis input: %w", err)
-	}
-	snapshotJSON, err := snapshot.Canonical()
-	if err != nil {
-		return fmt.Errorf("freeze seed analysis input: %w", err)
-	}
-	analysis := model.DeviationAnalysis{
-		SensorSeriesID: series[0].ID, RecipeID: recipes[0].ID, RecipeVersion: recipes[0].Version,
-		AlgorithmVersion: algorithm.Version, InputHash: inputHash, InputSnapshot: snapshotJSON,
-		PhaseScoresJSON: result.PhaseScoresJSON, DeviationLevel: string(result.DeviationLevel),
-		AlignedCurveJSON: result.AlignedCurveJSON, SuspectedCausesJSON: result.SuspectedCausesJSON,
-		AnalysisState: string(constants.AnalysisCompleted), Explanation: result.Explanation,
-		AnalyzedAt: now.Add(-2 * time.Hour), InitiatedBy: analyst.ID, InitiatedByName: analyst.Username,
-		IdempotencyKey: "seed-analysis-001", DurationMilliseconds: 4,
-		CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour),
-	}
-	if err := tx.Create(&analysis).Error; err != nil {
-		return fmt.Errorf("create seed deviation analysis: %w", err)
+	for index, batch := range batches {
+		seedSeries := batchSeries[index]
+		snapshot := algorithm.NewSnapshot(seedSeries, recipes[0])
+		result, evalErr := algorithm.NewEvaluator().Evaluate(snapshot)
+		if evalErr != nil {
+			return fmt.Errorf("evaluate seed deviation analysis for %s: %w", batch.runCode, evalErr)
+		}
+		inputHash, hashErr := snapshot.Hash()
+		if hashErr != nil {
+			return fmt.Errorf("hash seed analysis input for %s: %w", batch.runCode, hashErr)
+		}
+		snapshotJSON, canonicalErr := snapshot.Canonical()
+		if canonicalErr != nil {
+			return fmt.Errorf("freeze seed analysis input for %s: %w", batch.runCode, canonicalErr)
+		}
+		overallScore := result.OverallScore
+		seedAnalysis := model.DeviationAnalysis{
+			SensorSeriesID: seedSeries.ID, RecipeID: recipes[0].ID, RecipeVersion: recipes[0].Version,
+			AlgorithmVersion: algorithm.Version, InputHash: inputHash, InputSnapshot: snapshotJSON,
+			PhaseScoresJSON: result.PhaseScoresJSON, OverallScore: &overallScore,
+			DeviationLevel: string(result.DeviationLevel),
+			AlignedCurveJSON: result.AlignedCurveJSON, SuspectedCausesJSON: result.SuspectedCausesJSON,
+			AnalysisState: string(constants.AnalysisCompleted), Explanation: result.Explanation,
+			AnalyzedAt: batch.analyzedAt, InitiatedBy: analyst.ID, InitiatedByName: analyst.Username,
+			IdempotencyKey: batch.idempotency, DurationMilliseconds: 4,
+			CreatedAt: batch.analyzedAt, UpdatedAt: batch.analyzedAt,
+		}
+		if err := tx.Create(&seedAnalysis).Error; err != nil {
+			return fmt.Errorf("create seed deviation analysis for %s: %w", batch.runCode, err)
+		}
 	}
 	return nil
 }
